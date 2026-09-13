@@ -1,118 +1,135 @@
-from http.server import BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
-import json
 import os
-import urllib.request
-import urllib.parse
+import requests
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
+
+@app.route("/")
+def home():
+    return jsonify({
+        "success": True,
+        "message": "Misstu YouTube Song API is running",
+        "usage": "/api/song?query=Tum%20Hi%20Ho",
+        "powered_by": "Toxice Hacker",
+        "developer": "@misstu001"
+    })
 
 
-class handler(BaseHTTPRequestHandler):
+@app.route("/api/song")
+def song_search():
 
-    def do_GET(self):
-        parsed = urlparse(self.path)
+    query = request.args.get("query", "").strip()
 
-        if parsed.path != "/api/song":
-            self.send_json(404, {
+    if not query:
+        return jsonify({
+            "success": False,
+            "error": "query is required",
+            "example": "/api/song?query=Tum%20Hi%20Ho",
+            "powered_by": "Toxice Hacker",
+            "developer": "@misstu001"
+        }), 400
+
+    if not YOUTUBE_API_KEY:
+        return jsonify({
+            "success": False,
+            "error": "YOUTUBE_API_KEY is not configured",
+            "powered_by": "Toxice Hacker",
+            "developer": "@misstu001"
+        }), 500
+
+    url = "https://www.googleapis.com/youtube/v3/search"
+
+    params = {
+        "part": "snippet",
+        "q": query,
+        "type": "video",
+        "maxResults": 10,
+        "order": "relevance",
+        "regionCode": "IN",
+        "key": YOUTUBE_API_KEY
+    }
+
+    try:
+        response = requests.get(
+            url,
+            params=params,
+            timeout=20
+        )
+
+        data = response.json()
+
+        if response.status_code != 200:
+            return jsonify({
                 "success": False,
-                "error": "Use /api/song?query=Song%20Name"
+                "error": data.get("error", {}).get(
+                    "message",
+                    "YouTube API request failed"
+                ),
+                "powered_by": "Toxice Hacker",
+                "developer": "@misstu001"
+            }), response.status_code
+
+        results = []
+
+        for item in data.get("items", []):
+
+            video_id = item.get("id", {}).get("videoId")
+
+            if not video_id:
+                continue
+
+            snippet = item.get("snippet", {})
+
+            results.append({
+                "video_id": video_id,
+                "title": snippet.get("title"),
+                "artist": snippet.get("channelTitle"),
+                "channel": snippet.get("channelTitle"),
+                "description": snippet.get("description"),
+                "published_at": snippet.get("publishedAt"),
+                "thumbnail": (
+                    snippet.get("thumbnails", {})
+                    .get("high", {})
+                    .get("url")
+                ),
+                "youtube_url":
+                    f"https://www.youtube.com/watch?v={video_id}"
             })
-            return
 
-        query = parse_qs(parsed.query).get("query", [""])[0].strip()
-
-        if not query:
-            self.send_json(400, {
-                "success": False,
-                "error": "query is required"
-            })
-            return
-
-        api_key = os.environ.get("YOUTUBE_API_KEY")
-
-        if not api_key:
-            self.send_json(500, {
-                "success": False,
-                "error": "YOUTUBE_API_KEY is not configured"
-            })
-            return
-
-        params = urllib.parse.urlencode({
-            "part": "snippet",
-            "q": query,
-            "type": "video",
-            "maxResults": 10,
-            "order": "relevance",
-            "regionCode": "IN",
-            "key": api_key
+        return jsonify({
+            "success": True,
+            "query": query,
+            "count": len(results),
+            "results": results,
+            "powered_by": "Toxice Hacker",
+            "developer": "@misstu001"
         })
 
-        url = "https://www.googleapis.com/youtube/v3/search?" + params
+    except requests.exceptions.Timeout:
 
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "Mozilla/5.0"}
-            )
+        return jsonify({
+            "success": False,
+            "error": "YouTube API timeout",
+            "powered_by": "Toxice Hacker",
+            "developer": "@misstu001"
+        }), 504
 
-            with urllib.request.urlopen(req, timeout=15) as r:
-                data = json.loads(r.read().decode("utf-8"))
+    except Exception as e:
 
-            results = []
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "powered_by": "Toxice Hacker",
+            "developer": "@misstu001"
+        }), 500
 
-            for item in data.get("items", []):
-                video_id = item.get("id", {}).get("videoId")
 
-                if not video_id:
-                    continue
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
 
-                snippet = item.get("snippet", {})
-
-                results.append({
-                    "video_id": video_id,
-                    "title": snippet.get("title"),
-                    "artist": snippet.get("channelTitle"),
-                    "channel": snippet.get("channelTitle"),
-                    "thumbnail": (
-                        snippet.get("thumbnails", {})
-                        .get("high", {})
-                        .get("url")
-                    ),
-                    "youtube_url":
-                        f"https://www.youtube.com/watch?v={video_id}"
-                })
-
-            self.send_json(200, {
-                "success": True,
-                "query": query,
-                "count": len(results),
-                "results": results,
-                "powered_by": "Toxice Hacker",
-                "developer": "@misstu001"
-            })
-
-        except Exception as e:
-            self.send_json(500, {
-                "success": False,
-                "error": str(e),
-                "powered_by": "Toxice Hacker",
-                "developer": "@misstu001"
-            })
-
-    def send_json(self, status, data):
-        body = json.dumps(
-            data,
-            ensure_ascii=False,
-            indent=2
-        ).encode("utf-8")
-
-        self.send_response(status)
-        self.send_header(
-            "Content-Type",
-            "application/json; charset=utf-8"
-        )
-        self.send_header(
-            "Access-Control-Allow-Origin",
-            "*"
-        )
-        self.end_headers()
-        self.wfile.write(body)
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
